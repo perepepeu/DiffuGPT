@@ -1,4 +1,11 @@
-# 🧠 Hybrid Diffusion-AR Text Generator
+# DiffuGPT
+
+> Hybrid discrete diffusion + autoregressive text generation, built from scratch.
+
+[![Python](https://img.shields.io/badge/Python-3.13-blue)](https://python.org)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.x-red)](https://pytorch.org)
+[![License](https://img.shields.io/badge/License-MIT-green)]()
+
 
 Modelo de linguagem híbrido construído do zero em Python/PyTorch que combina **geração por difusão discreta** com **refinamento autoregressivo (GPT-style)**.
 
