@@ -2,3 +2,4 @@ torch
 numpy
 regex
 tqdm
+flask
