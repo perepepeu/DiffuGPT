@@ -8,6 +8,14 @@ from tokenizer import BPEFastTokenizer
 
 
 # ══════════════════════════════════════════════════════════════════
+# UTILS
+# ══════════════════════════════════════════════════════════════════
+def _sanitize_ids(ids, vocab_size):
+    """Garante que nenhum token id esta fora do range valido."""
+    return [max(0, min(i, vocab_size - 2)) for i in ids]
+
+
+# ══════════════════════════════════════════════════════════════════
 # MODO 1 — Diffusion
 # ══════════════════════════════════════════════════════════════════
 def generate(
@@ -50,6 +58,9 @@ def generate(
             probs.view(-1, probs.size(-1)), 1
         ).view(x.shape)
 
+        # ← FIX 1: clamp para nunca gerar token fora do vocab
+        sampled = sampled.clamp(0, cfg.vocab_size - 2)
+
         x[update_mask] = sampled[update_mask]
 
         if show_steps:
@@ -83,6 +94,8 @@ def generate_ar(
     device = cfg.device
 
     ids = tok.encode(prompt)
+    # ← FIX 2: sanitizar ids do prompt
+    ids = _sanitize_ids(ids, cfg.vocab_size)
     x   = torch.tensor(ids).unsqueeze(0).to(device)
 
     start     = time.time()
@@ -101,6 +114,9 @@ def generate_ar(
         probs      = torch.softmax(next_logits, dim=-1)
         next_token = torch.multinomial(probs, 1)
 
+        # ← FIX 2: clamp token gerado
+        next_token = next_token.clamp(0, cfg.vocab_size - 2)
+
         x         = torch.cat([x, next_token.unsqueeze(0)], dim=1)
         generated += 1
 
@@ -115,11 +131,14 @@ def _refine_ar(model, draft_ids, cfg, temperature=1.0, mode="balanced"):
     """
     Um unico forward pass causal no rascunho inteiro.
 
-    mode="fast"     → threshold alto (0.65): menos tokens trocados, mais rapido pos-proc
-    mode="balanced" → threshold baixo (0.55): mais agressivo, compensa falta de cascata
+    mode="fast"     → threshold alto (0.65): menos tokens trocados
+    mode="balanced" → threshold baixo (0.55): mais agressivo
     """
     threshold = cfg.ar_threshold_fast if mode == "fast" else cfg.ar_threshold_balanced
     device    = cfg.device
+
+    # ← FIX 3: sanitizar draft antes do forward pass
+    draft_ids = _sanitize_ids(draft_ids, cfg.vocab_size)
 
     x = torch.tensor(draft_ids).unsqueeze(0).to(device)
 
@@ -129,11 +148,14 @@ def _refine_ar(model, draft_ids, cfg, temperature=1.0, mode="balanced"):
     probs              = torch.softmax(logits[0] / temperature, dim=-1)  # (T, V)
     top_probs, top_tok = probs.max(dim=-1)            # (T,)
 
-    refined = list(draft_ids)
+    refined  = list(draft_ids)
     replaced = 0
     for i in range(len(draft_ids) - 1):
-        if top_probs[i].item() > threshold and top_tok[i].item() != refined[i + 1]:
-            refined[i + 1] = top_tok[i].item()
+        pred = top_tok[i].item()
+        # ← FIX 3: clamp token predito pelo AR
+        pred = max(0, min(pred, cfg.vocab_size - 2))
+        if top_probs[i].item() > threshold and pred != refined[i + 1]:
+            refined[i + 1] = pred
             replaced += 1
 
     return refined, replaced
@@ -149,7 +171,7 @@ def generate_hybrid(
     diff_steps=24,
     min_new_tokens=20,
     ar_temperature=1.0,
-    ar_mode=None,        # None = usa cfg.ar_refine_mode
+    ar_mode=None,
     show_steps=False,
 ):
     cfg      = Config()
@@ -165,10 +187,14 @@ def generate_hybrid(
     )
 
     # Estagio 2: AR Refinement (1 forward pass)
-    start              = time.time()
-    draft_ids          = tok.encode(draft_text)
-    refined, replaced  = _refine_ar(model, draft_ids, cfg, ar_temperature, mode=refine_m)
-    elapsed            = time.time() - start
+    start     = time.time()
+    draft_ids = tok.encode(draft_text)
+
+    # ← FIX 3: sanitizar antes do refiner
+    draft_ids = _sanitize_ids(draft_ids, cfg.vocab_size)
+
+    refined, replaced = _refine_ar(model, draft_ids, cfg, ar_temperature, mode=refine_m)
+    elapsed           = time.time() - start
 
     refined_text = tok.decode(refined)
     ar_tps       = len(refined) / max(elapsed, 1e-6)
