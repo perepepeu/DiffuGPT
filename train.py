@@ -13,6 +13,7 @@ from model.scheduler import NoiseScheduler
 from data.dataset import TextDataset
 
 
+# Salva métricas parciais durante o treinamento para acompanhamento em tempo real.
 def save_live_logs(train_losses, val_losses, diff_losses, ar_losses):
     os.makedirs("loss", exist_ok=True)
     data = {
@@ -25,6 +26,7 @@ def save_live_logs(train_losses, val_losses, diff_losses, ar_losses):
         json.dump(data, f, indent=2)
 
 
+# Salva o histórico final completo das perdas ao término do treinamento.
 def save_final_logs(train_losses, val_losses, diff_losses, ar_losses):
     os.makedirs("loss", exist_ok=True)
     data = {
@@ -37,6 +39,7 @@ def save_final_logs(train_losses, val_losses, diff_losses, ar_losses):
         json.dump(data, f, indent=2)
 
 
+# Define sementes para tornar o treinamento o mais reproduzível possível.
 def seed_everything(seed):
     random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
@@ -45,15 +48,18 @@ def seed_everything(seed):
         torch.cuda.manual_seed_all(seed)
 
 
+# Lê um atributo do config com fallback para um valor padrão.
 def get_cfg_value(cfg, name, default):
     return getattr(cfg, name, default)
 
 
+# Garante que diretórios usados no treinamento existam antes de salvar arquivos.
 def make_dirs():
     os.makedirs("checkpoints", exist_ok=True)
     os.makedirs("loss", exist_ok=True)
 
 
+# Constrói o modelo principal a partir dos hiperparâmetros definidos em cfg.
 def build_model(cfg, device):
     return HybridModel(
         cfg.vocab_size,
@@ -65,6 +71,7 @@ def build_model(cfg, device):
     ).to(device)
 
 
+# Carrega arquivos .pt de forma compatível com versões diferentes do PyTorch.
 def safe_torch_load(path, map_location):
     try:
         return torch.load(path, map_location=map_location, weights_only=True)
@@ -72,6 +79,7 @@ def safe_torch_load(path, map_location):
         return torch.load(path, map_location=map_location)
 
 
+# Remove o prefixo "_orig_mod." quando o modelo foi salvo após compile.
 def strip_compiled_prefix(state_dict):
     if not isinstance(state_dict, dict):
         return state_dict
@@ -88,6 +96,8 @@ def strip_compiled_prefix(state_dict):
     return cleaned
 
 
+# Carrega pesos existentes de "model.pt" se o arquivo estiver disponível.
+# Usa strict=False para permitir evolução parcial da arquitetura.
 def load_existing_weights(model, device):
     if not os.path.exists("model.pt"):
         return
@@ -111,10 +121,12 @@ def load_existing_weights(model, device):
     print("Pesos de model.pt carregados com sucesso.")
 
 
+# Salva apenas os pesos do melhor modelo encontrado até o momento.
 def save_best_weights(model):
     torch.save(model.state_dict(), "model.pt")
 
 
+# Salva um checkpoint completo por época, incluindo otimizador e histórico.
 def save_epoch_checkpoint(model, optimizer, epoch, best_val, train_losses, val_losses, diff_losses, ar_losses):
     ckpt = {
         "epoch": epoch,
@@ -129,6 +141,7 @@ def save_epoch_checkpoint(model, optimizer, epoch, best_val, train_losses, val_l
     torch.save(ckpt, f"checkpoints/epoch_{epoch}.pt")
 
 
+# Valida shape e faixa dos token IDs antes de enviar o batch ao modelo.
 def validate_batch(batch, cfg):
     if batch.ndim != 2:
         raise ValueError(f"Batch precisa ter shape (B, T), mas veio {tuple(batch.shape)}.")
@@ -147,6 +160,7 @@ def validate_batch(batch, cfg):
         )
 
 
+# Amostra timesteps válidos para o processo de difusão.
 def sample_timesteps(batch_size, max_timesteps, device, generator=None):
     if max_timesteps < 2:
         raise ValueError("cfg.max_timesteps precisa ser >= 2.")
@@ -155,6 +169,8 @@ def sample_timesteps(batch_size, max_timesteps, device, generator=None):
     return t.to(device)
 
 
+# Aplica ruído mascarando posições aleatórias de acordo com o scheduler.
+# Garante ao menos uma posição mascarada por sequência.
 def add_noise(batch, t, mask_token, scheduler, generator=None):
     prob = scheduler.get_prob(t).unsqueeze(1)
 
@@ -165,6 +181,7 @@ def add_noise(batch, t, mask_token, scheduler, generator=None):
 
     mask = rand < prob
 
+    # Evita linhas sem máscara, o que tornaria o passo de difusão inútil.
     empty_rows = ~mask.any(dim=1)
     if empty_rows.any():
         row_ids = torch.nonzero(empty_rows, as_tuple=False).squeeze(1)
@@ -183,6 +200,7 @@ def add_noise(batch, t, mask_token, scheduler, generator=None):
     return x_noisy
 
 
+# Cria os DataLoaders de treino e validação com split reproduzível.
 def make_loaders(dataset, cfg, seed, pin_memory):
     if len(dataset) < 2:
         raise ValueError("O dataset precisa ter pelo menos 2 amostras para split train/val.")
@@ -190,6 +208,7 @@ def make_loaders(dataset, cfg, seed, pin_memory):
     train_size = int(0.9 * len(dataset))
     val_size = len(dataset) - train_size
 
+    # Garante que os dois conjuntos tenham pelo menos uma amostra.
     if train_size == 0:
         train_size = 1
         val_size = len(dataset) - 1
@@ -217,6 +236,7 @@ def make_loaders(dataset, cfg, seed, pin_memory):
         "pin_memory": pin_memory,
     }
 
+    # Mantém workers vivos entre épocas para reduzir overhead quando houver multiprocessing.
     if num_workers > 0:
         train_loader_kwargs["persistent_workers"] = True
         val_loader_kwargs["persistent_workers"] = True
@@ -232,6 +252,8 @@ def make_loaders(dataset, cfg, seed, pin_memory):
     return train_loader, val_loader
 
 
+# Fluxo principal de treinamento:
+# prepara dados, cria modelo, executa treino/validação e salva checkpoints.
 def main():
     cfg = Config()
     seed = int(get_cfg_value(cfg, "seed", 42))
@@ -246,12 +268,15 @@ def main():
     seed_everything(seed)
     make_dirs()
 
+    # Carrega dataset tokenizado e prepara loaders.
     dataset = TextDataset("data/train_ids.npy")
     train_loader, val_loader = make_loaders(dataset, cfg, seed, pin_memory)
 
+    # Cria o modelo base e tenta reaproveitar pesos anteriores.
     base_model = build_model(cfg, device)
     load_existing_weights(base_model, device)
 
+    # Tenta acelerar execução com torch.compile quando disponível.
     model = base_model
     if use_compile:
         try:
@@ -281,13 +306,16 @@ def main():
             batch = torch.as_tensor(batch, dtype=torch.long, device=device)
             validate_batch(batch, cfg)
 
+            # Amostra um tempo t e cria entrada ruidosa para o objetivo de difusão.
             t = sample_timesteps(batch.size(0), cfg.max_timesteps, device=device)
             x_noisy = add_noise(batch, t, base_model.MASK, scheduler)
 
+            # Calcula as duas perdas: difusão e autoregressiva.
             _, loss_diff = model.forward_diffusion(x_noisy, t, targets=batch)
             _, loss_ar = model.forward_ar(batch, targets=batch)
             loss = (1.0 - cfg.ar_alpha) * loss_diff + cfg.ar_alpha * loss_ar
 
+            # Interrompe cedo se surgir perda inválida.
             if not torch.isfinite(loss):
                 raise RuntimeError(
                     f"Loss inválida no treino. loss={loss.item()}, diff={loss_diff.item()}, ar={loss_ar.item()}."
@@ -295,6 +323,8 @@ def main():
 
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
+
+            # Limita norma do gradiente para maior estabilidade.
             torch.nn.utils.clip_grad_norm_(base_model.parameters(), grad_clip)
             optimizer.step()
 
@@ -313,6 +343,7 @@ def main():
                 ar=f"{avg_ar:.4f}",
             )
 
+            # Salva logs parciais em intervalos regulares para monitoramento externo.
             if step_idx == 1 or step_idx % max(1, live_log_every) == 0 or step_idx == len(train_loader):
                 save_live_logs(
                     train_losses + [avg_loss],
@@ -339,6 +370,7 @@ def main():
                 batch = torch.as_tensor(batch, dtype=torch.long, device=device)
                 validate_batch(batch, cfg)
 
+                # Usa gerador determinístico na validação para reduzir variação entre épocas.
                 val_gen = torch.Generator().manual_seed(seed + batch_idx)
                 t = sample_timesteps(batch.size(0), cfg.max_timesteps, device=device, generator=val_gen)
                 x_noisy = add_noise(batch, t, base_model.MASK, scheduler, generator=val_gen)
@@ -376,6 +408,7 @@ def main():
             f"ValDiff {val_diff_total / count:.4f} | ValAR {val_ar_total / count:.4f}"
         )
 
+        # Atualiza o melhor modelo com base na perda de validação.
         if val_loss < best_val:
             best_val = val_loss
             save_best_weights(base_model)
@@ -394,6 +427,7 @@ def main():
 
     save_final_logs(train_losses, val_losses, diff_losses, ar_losses)
 
+    # Remove o log temporário ao final, mantendo apenas o histórico final.
     if os.path.exists("loss/live.json"):
         os.remove("loss/live.json")
 
