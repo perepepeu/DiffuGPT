@@ -42,7 +42,7 @@ Texto final
 ## 📁 Estrutura do projeto
 
 ```
-py convert/
+DiffuGPT/
 │   config.py            # Hiperparâmetros e configurações
 │   train.py             # Loop de treinamento híbrido
 │   train_tokenizer.py   # Treina o tokenizer BPE
@@ -72,6 +72,52 @@ py convert/
 │           index.html
 │
 └───checkpoints/         # Checkpoints por época (gerados no treino)
+```
+
+---
+
+## 📂 Formato do dataset
+
+O modelo espera um único arquivo de texto plano em `data/dataset.txt`.
+
+### Requisitos
+
+| Item | Detalhe |
+|---|---|
+| Formato | `.txt` — texto puro, UTF-8 |
+| Tamanho mínimo recomendado | ~500 KB (quanto maior, melhor) |
+| Idioma | Qualquer — o tokenizer BPE aprende do próprio corpus |
+| Estrutura | Texto corrido, sem formatação especial obrigatória |
+
+### Exemplos de fontes válidas
+
+- Livros e contos em `.txt` (ex: Project Gutenberg)
+- Artigos exportados da Wikipedia
+- Letras de músicas / poesias concatenadas
+- Diálogos e roteiros
+- Qualquer corpus de texto no idioma que quiser gerar
+
+### Exemplo do formato esperado
+
+```
+Era uma vez um reino muito distante onde todos viviam em paz.
+O rei era justo e a rainha, sábia. Juntos governavam com bondade.
+Certo dia, um viajante chegou trazendo notícias do além-mar...
+```
+
+> Não é necessário separar por frases ou parágrafos de forma especial.  
+> O `prepare.py` tokeniza tudo e divide automaticamente em blocos de `block_size=128` tokens.
+
+### Como o pipeline processa
+
+```
+dataset.txt
+    │  train_tokenizer.py  → aprende 1024 merges BPE sobre o corpus
+    ▼
+tok-1024.model
+    │  data/prepare.py     → tokeniza e divide em blocos de 128 tokens
+    ▼
+train_ids.npy              → array (N, 128) pronto para o DataLoader
 ```
 
 ---
