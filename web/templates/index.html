@@ -1,0 +1,566 @@
+<!-- web/templates/index.html -->
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Diffusion Chat</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<canvas id="bgCanvas"></canvas>
+<div class="scanlines"></div>
+
+<div class="app">
+
+    <!-- ══ SIDEBAR ══ -->
+    <aside class="sidebar">
+        <div class="sidebar-inner">
+
+            <div class="logo-section">
+                <div class="logo-glyph">
+                    <svg viewBox="0 0 40 40" fill="none">
+                        <circle cx="20" cy="20" r="18" stroke="url(#lg1)" stroke-width="1.5"/>
+                        <path d="M20 6 L20 34 M6 20 L34 20" stroke="url(#lg1)" stroke-width="1" opacity=".5"/>
+                        <circle cx="20" cy="20" r="5" fill="url(#lg1)"/>
+                        <defs>
+                            <linearGradient id="lg1" x1="0" y1="0" x2="40" y2="40">
+                                <stop offset="0%" stop-color="#c084fc"/>
+                                <stop offset="100%" stop-color="#22d3ee"/>
+                            </linearGradient>
+                        </defs>
+                    </svg>
+                </div>
+                <div>
+                    <div class="logo-text" data-glitch="DiffusionChat">DiffusionChat</div>
+                    <div class="logo-sub">v1.0 · neural interface</div>
+                </div>
+            </div>
+
+            <!-- Model -->
+            <div class="card">
+                <div class="card-label">MODELO</div>
+                <div class="select-box">
+                    <select id="modelSelect"></select>
+                    <div class="select-arrow">❯</div>
+                </div>
+                <button class="load-btn" onclick="loadModel()">
+                    <span class="load-btn-inner">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+                        </svg>
+                        Carregar Modelo
+                    </span>
+                    <div class="load-btn-glow"></div>
+                </button>
+                <div id="modelStatus" class="model-status">
+                    <span class="status-dot"></span>
+                    <span id="statusText">aguardando...</span>
+                </div>
+            </div>
+
+            <!-- Config -->
+            <div class="card">
+                <div class="card-label">GERAÇÃO</div>
+
+                <label class="fancy-toggle">
+                    <input type="checkbox" id="diffusionToggle">
+                    <div class="fancy-track">
+                        <div class="fancy-thumb">
+                            <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 2a10 10 0 100 20A10 10 0 0012 2z"/>
+                            </svg>
+                        </div>
+                        <div class="fancy-label-off">DIFF OFF</div>
+                        <div class="fancy-label-on">DIFF ON</div>
+                    </div>
+                </label>
+
+                <div class="slider-group">
+                    <div class="slider-header">
+                        <span class="slider-label">Mín. tokens</span>
+                        <span class="slider-value" id="minTokensVal">32</span>
+                    </div>
+                    <div class="slider-track-wrap">
+                        <input type="range" id="minTokensSlider"
+                               min="8" max="256" step="8" value="32"
+                               oninput="updateSlider(this)">
+                        <div class="slider-fill" id="sliderFill"></div>
+                    </div>
+                    <div class="slider-ticks">
+                        <span>8</span><span>64</span><span>128</span><span>192</span><span>256</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Loss Chart -->
+            <div class="card chart-card">
+                <div class="card-label">LOSS EM TEMPO REAL</div>
+                <div class="chart-wrap">
+                    <canvas id="lossChart"></canvas>
+                </div>
+                <div class="loss-stats">
+                    <div class="loss-stat">
+                        <div class="loss-line train"></div>
+                        <div class="loss-stat-info">
+                            <span class="loss-type">Train</span>
+                            <span id="trainVal" class="loss-num">—</span>
+                        </div>
+                    </div>
+                    <div class="loss-divider"></div>
+                    <div class="loss-stat">
+                        <div class="loss-line val"></div>
+                        <div class="loss-stat-info">
+                            <span class="loss-type">Val</span>
+                            <span id="valVal" class="loss-num">—</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </aside>
+
+    <!-- ══ CHAT ══ -->
+    <main class="chat-panel">
+
+        <header class="chat-header">
+            <div class="chat-header-left">
+                <div class="online-ring">
+                    <div class="online-core"></div>
+                </div>
+                <div>
+                    <div class="chat-title">Assistente Difusivo</div>
+                    <div class="chat-subtitle" id="chatSub">Sistema pronto</div>
+                </div>
+            </div>
+            <div class="header-metrics" id="headerMetrics"></div>
+        </header>
+
+        <div class="messages-area" id="messages">
+            <div class="welcome-msg">
+                <div class="welcome-glyph">⟡</div>
+                <div class="welcome-text">Modelo de difusão carregado.<br>Inicie uma conversa.</div>
+            </div>
+        </div>
+
+        <!-- Diffusion Overlay -->
+        <div id="diffusionOverlay" class="diffusion-overlay hidden">
+            <div class="diff-header">
+                <div class="diff-title">
+                    <span class="diff-icon">◈</span>
+                    Denoising em progresso
+                </div>
+                <div class="diff-step-counter">
+                    Passo <span id="diffStep">0</span> / 24
+                </div>
+            </div>
+            <canvas id="diffCanvas"></canvas>
+            <div class="diff-footer">
+                <div class="diff-bar-wrap">
+                    <div class="diff-bar-fill" id="diffBarFill"></div>
+                </div>
+                <span class="diff-pct" id="diffPct">0%</span>
+            </div>
+        </div>
+
+        <div class="composer">
+            <div class="composer-inner">
+                <div class="composer-prefix">›</div>
+                <textarea id="prompt" placeholder="Digite aqui..." rows="1"
+                    onkeydown="handleKey(event)"
+                    oninput="autoResize(this)"></textarea>
+                <button class="send-btn" onclick="send()" id="sendBtn">
+                    <div class="send-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <line x1="22" y1="2" x2="11" y2="13"/>
+                            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                        </svg>
+                    </div>
+                    <div class="send-ripple"></div>
+                </button>
+            </div>
+            <div class="composer-hint">Enter para enviar · Shift+Enter para nova linha</div>
+        </div>
+
+    </main>
+</div>
+
+<script>
+/* ══════════════════════════════════
+   PARTICLE BACKGROUND
+══════════════════════════════════ */
+const canvas = document.getElementById("bgCanvas");
+const ctx2   = canvas.getContext("2d");
+let W, H, particles = [];
+
+function resize() { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
+function mkParticle() {
+    return { x:Math.random()*W, y:Math.random()*H, r:Math.random()*1.2+.3,
+             vx:(Math.random()-.5)*.25, vy:(Math.random()-.5)*.25, alpha:Math.random()*.5+.1 };
+}
+function initParticles() { particles = Array.from({length:110}, mkParticle); }
+function drawParticles() {
+    ctx2.clearRect(0,0,W,H);
+    for(let i=0;i<particles.length;i++){
+        for(let j=i+1;j<particles.length;j++){
+            const dx=particles[i].x-particles[j].x, dy=particles[i].y-particles[j].y;
+            const d=Math.sqrt(dx*dx+dy*dy);
+            if(d<115){
+                ctx2.beginPath(); ctx2.moveTo(particles[i].x,particles[i].y);
+                ctx2.lineTo(particles[j].x,particles[j].y);
+                ctx2.strokeStyle=`rgba(167,139,250,${.09*(1-d/115)})`; ctx2.lineWidth=.6; ctx2.stroke();
+            }
+        }
+        const p=particles[i];
+        ctx2.beginPath(); ctx2.arc(p.x,p.y,p.r,0,Math.PI*2);
+        ctx2.fillStyle=`rgba(167,139,250,${p.alpha})`; ctx2.fill();
+        p.x+=p.vx; p.y+=p.vy;
+        if(p.x<0||p.x>W) p.vx*=-1;
+        if(p.y<0||p.y>H) p.vy*=-1;
+    }
+    requestAnimationFrame(drawParticles);
+}
+window.addEventListener("resize",()=>{ resize(); initParticles(); });
+resize(); initParticles(); drawParticles();
+
+/* ══════════════════════════════════
+   GLITCH
+══════════════════════════════════ */
+const glitchEl = document.querySelector("[data-glitch]");
+setInterval(()=>{
+    glitchEl.classList.add("glitch-on");
+    setTimeout(()=>glitchEl.classList.remove("glitch-on"),180);
+},4500);
+
+/* ══════════════════════════════════
+   CHART.JS
+══════════════════════════════════ */
+let lossChart;
+function initChart() {
+    const c = document.getElementById("lossChart").getContext("2d");
+    const gT = c.createLinearGradient(0,0,0,130);
+    gT.addColorStop(0,"rgba(192,132,252,.35)"); gT.addColorStop(1,"rgba(192,132,252,0)");
+    const gV = c.createLinearGradient(0,0,0,130);
+    gV.addColorStop(0,"rgba(34,211,238,.25)"); gV.addColorStop(1,"rgba(34,211,238,0)");
+    lossChart = new Chart(c, {
+        type:"line",
+        data:{ labels:[], datasets:[
+            {label:"Train",data:[],borderColor:"#c084fc",backgroundColor:gT,borderWidth:2,pointRadius:0,tension:.45,fill:true},
+            {label:"Val",  data:[],borderColor:"#22d3ee",backgroundColor:gV,borderWidth:2,pointRadius:0,tension:.45,fill:true}
+        ]},
+        options:{ responsive:true, maintainAspectRatio:false,
+            plugins:{legend:{display:false},tooltip:{enabled:false}},
+            scales:{
+                x:{display:false},
+                y:{display:true, grid:{color:"rgba(255,255,255,0.03)"},
+                   ticks:{color:"#334155",font:{size:8,family:"JetBrains Mono"},maxTicksLimit:4}}
+            },
+            animation:{duration:600,easing:"easeInOutQuart"}
+        }
+    });
+}
+async function loadLogs() {
+    try {
+        const d = await (await fetch("/logs")).json();
+        const tr=(d.train_loss||[]).slice(-40), va=(d.val_loss||[]).slice(-40);
+        lossChart.data.labels=tr.map((_,i)=>i);
+        lossChart.data.datasets[0].data=tr;
+        lossChart.data.datasets[1].data=va;
+        lossChart.update("none");
+        const tl=tr[tr.length-1], vl=va[va.length-1];
+        if(tl!==undefined) document.getElementById("trainVal").textContent=tl.toFixed(4);
+        if(vl!==undefined) document.getElementById("valVal").textContent=vl.toFixed(4);
+    } catch(e){}
+}
+
+/* ══════════════════════════════════
+   MODEL
+══════════════════════════════════ */
+async function loadCheckpoints() {
+    const d   = await (await fetch("/checkpoints")).json();
+    const sel = document.getElementById("modelSelect");
+    sel.innerHTML = `<option value="best">⭑ best</option>`;
+    d.forEach(f=>{ const o=document.createElement("option"); o.value=o.textContent=f; sel.appendChild(o); });
+}
+async function loadModel() {
+    const name = document.getElementById("modelSelect").value;
+    const dot  = document.querySelector(".status-dot");
+    const txt  = document.getElementById("statusText");
+    dot.className="status-dot loading"; txt.textContent="carregando...";
+    await fetch("/load_model",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name})});
+    dot.className="status-dot active"; txt.textContent=name;
+}
+
+/* ══════════════════════════════════
+   SLIDER
+══════════════════════════════════ */
+function updateSlider(el) {
+    const pct = (el.value - el.min) / (el.max - el.min) * 100;
+    document.getElementById("minTokensVal").textContent = el.value;
+    document.getElementById("sliderFill").style.width   = pct + "%";
+}
+window.addEventListener("DOMContentLoaded", ()=>{
+    const sl = document.getElementById("minTokensSlider");
+    document.getElementById("sliderFill").style.width =
+        ((sl.value - sl.min) / (sl.max - sl.min) * 100) + "%";
+});
+
+/* ══════════════════════════════════
+   DIFFUSION CANVAS VISUALIZER
+══════════════════════════════════ */
+const NOISE_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+const TOTAL_STEPS = 24;
+let diffInterval     = null;
+let diffCurrentStep  = 0;
+let diffTargetChars  = [];
+let diffDisplayChars = [];
+let diffRevealed     = [];
+
+function isWhitespace(c) { return c === " " || c === "\n" || c === "\t"; }
+function randomNoise()   { return NOISE_CHARS[Math.floor(Math.random() * NOISE_CHARS.length)]; }
+
+function startDiffusionVisual(targetText) {
+    document.getElementById("diffusionOverlay").classList.remove("hidden");
+
+    diffTargetChars  = targetText.split("");
+    diffDisplayChars = diffTargetChars.map(c => isWhitespace(c) ? c : randomNoise());
+    diffRevealed     = diffTargetChars.map(c => isWhitespace(c));
+
+    diffCurrentStep = 0;
+    clearInterval(diffInterval);
+    renderDiffText();
+    diffInterval = setInterval(tickDiffusion, 120);
+}
+
+function tickDiffusion() {
+    diffCurrentStep++;
+    const progress   = diffCurrentStep / TOTAL_STEPS;
+    const totalReal  = diffTargetChars.filter(c => !isWhitespace(c)).length;
+    const toReveal   = Math.floor(progress * totalReal);
+
+    let revealedCount = diffRevealed.filter((r,i) => r && !isWhitespace(diffTargetChars[i])).length;
+
+    const indices = diffTargetChars
+        .map((c,i) => (!isWhitespace(c) && !diffRevealed[i]) ? i : -1)
+        .filter(i => i !== -1);
+
+    shuffle(indices);
+    for(let i=0; i<indices.length && revealedCount<toReveal; i++){
+        diffRevealed[indices[i]]     = true;
+        diffDisplayChars[indices[i]] = diffTargetChars[indices[i]];
+        revealedCount++;
+    }
+
+    for(let i=0; i<diffDisplayChars.length; i++){
+        if(!diffRevealed[i] && !isWhitespace(diffTargetChars[i])){
+            diffDisplayChars[i] = randomNoise();
+        }
+    }
+
+    renderDiffText();
+    document.getElementById("diffStep").textContent    = diffCurrentStep;
+    document.getElementById("diffBarFill").style.width = (progress * 100) + "%";
+    document.getElementById("diffPct").textContent     = Math.round(progress * 100) + "%";
+
+    if(diffCurrentStep >= TOTAL_STEPS){
+        diffDisplayChars = [...diffTargetChars];
+        diffRevealed     = diffTargetChars.map(() => true);
+        renderDiffText();
+        clearInterval(diffInterval);
+        setTimeout(stopDiffusionVisual, 900);
+    }
+}
+
+function renderDiffText() {
+    const dc   = document.getElementById("diffCanvas");
+    const dctx = dc.getContext("2d");
+    const font = "13px 'JetBrains Mono', monospace";
+    dctx.font  = font;
+
+    const charW = dctx.measureText("M").width;
+    const charH = 20;
+    const padX  = 12, padY = 14;
+    const maxW  = dc.parentElement.clientWidth - 32;
+    const cols  = Math.floor((maxW - padX * 2) / charW);
+    const lines = buildLines(diffDisplayChars, cols);
+    const rows  = Math.max(lines.length, 3);
+
+    dc.width  = maxW;
+    dc.height = rows * charH + padY * 2;
+
+    dctx.clearRect(0, 0, dc.width, dc.height);
+    dctx.font         = font;
+    dctx.textBaseline = "top";
+
+    let globalIdx = 0;
+    for(let r=0; r<lines.length; r++){
+        for(let c=0; c<lines[r].length; c++){
+            const ch       = lines[r][c];
+            const revealed = diffRevealed[globalIdx] ?? true;
+            const x = padX + c * charW;
+            const y = padY + r * charH;
+
+            if(isWhitespace(ch)){ globalIdx++; continue; }
+
+            if(revealed){
+                const t  = c / Math.max(cols - 1, 1);
+                const rr = Math.round(192 + (34  - 192) * t);
+                const gg = Math.round(132 + (211 - 132) * t);
+                const bb = Math.round(252 + (238 - 252) * t);
+                dctx.fillStyle = `rgba(${rr},${gg},${bb},0.95)`;
+            } else {
+                dctx.fillStyle = `rgba(251,146,60,${0.25 + Math.random() * 0.45})`;
+            }
+
+            dctx.fillText(ch, x, y);
+            globalIdx++;
+        }
+    }
+}
+
+function buildLines(chars, cols) {
+    const lines = [];
+    let current = [];
+    for(let i=0; i<chars.length; i++){
+        if(chars[i] === "\n"){
+            lines.push(current); current = [];
+        } else if(current.length >= cols){
+            lines.push(current);
+            current = chars[i] === " " ? [] : [chars[i]];
+        } else {
+            current.push(chars[i]);
+        }
+    }
+    if(current.length) lines.push(current);
+    return lines;
+}
+
+function shuffle(arr) {
+    for(let i=arr.length-1; i>0; i--){
+        const j = Math.floor(Math.random() * (i+1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+}
+
+function stopDiffusionVisual() {
+    document.getElementById("diffusionOverlay").classList.add("hidden");
+    document.getElementById("diffBarFill").style.width = "0%";
+    document.getElementById("diffStep").textContent    = "0";
+    document.getElementById("diffPct").textContent     = "0%";
+}
+
+/* ══════════════════════════════════
+   CHAT
+══════════════════════════════════ */
+let generating = false;
+
+function handleKey(e) { if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); send(); } }
+function autoResize(el) { el.style.height="auto"; el.style.height=Math.min(el.scrollHeight,140)+"px"; }
+
+async function send() {
+    if(generating) return;
+    const promptEl = document.getElementById("prompt");
+    const text     = promptEl.value.trim();
+    if(!text) return;
+
+    generating = true;
+    promptEl.value=""; promptEl.style.height="auto";
+    document.getElementById("sendBtn").classList.add("sending");
+    document.querySelector(".welcome-msg")?.remove();
+
+    addMessage("user", text);
+
+    const minTokens = parseInt(document.getElementById("minTokensSlider").value);
+    const useDiff   = document.getElementById("diffusionToggle").checked;
+
+    const typing = addTyping();
+    setSub("Processando difusão...");
+
+    if(useDiff) startDiffusionVisual("a".repeat(minTokens));
+
+    const d = await (await fetch("/generate", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ prompt:text, diffusion:useDiff, min_tokens:minTokens })
+    })).json();
+
+    typing.remove();
+    clearInterval(diffInterval);
+
+    if(useDiff){
+        startDiffusionVisual(d.text);
+        await new Promise(r => setTimeout(r, TOTAL_STEPS * 120 + 900));
+    }
+
+    addMessageTypewriter("bot", d.text, d.tokens, d.tps);
+    setSub(`${d.tokens} tokens · ${d.tps.toFixed(1)} t/s`);
+    setMetrics(d.tokens, d.tps);
+    generating = false;
+    document.getElementById("sendBtn").classList.remove("sending");
+}
+
+function setSub(t) { document.getElementById("chatSub").textContent = t; }
+
+function setMetrics(tok, tps) {
+    document.getElementById("headerMetrics").innerHTML =
+        `<div class="hm-item"><span class="hm-val">${tok}</span><span class="hm-key">tokens</span></div>
+         <div class="hm-sep"></div>
+         <div class="hm-item"><span class="hm-val">${tps.toFixed(1)}</span><span class="hm-key">t/s</span></div>`;
+}
+
+function addMessage(role, text) {
+    const area = document.getElementById("messages");
+    const wrap = document.createElement("div"); wrap.className = `msg-row ${role}`;
+    wrap.innerHTML = `
+        <div class="avatar ${role}">${role === "user" ? "U" : "AI"}</div>
+        <div class="bubble-col"><div class="bubble ${role}">${escapeHtml(text)}</div></div>`;
+    area.appendChild(wrap);
+    area.scrollTo({top: area.scrollHeight, behavior:"smooth"});
+}
+
+function addMessageTypewriter(role, text, tokens, tps) {
+    const area   = document.getElementById("messages");
+    const wrap   = document.createElement("div"); wrap.className = `msg-row ${role}`;
+    const bubble = document.createElement("div"); bubble.className = `bubble ${role}`;
+    const meta   = document.createElement("div"); meta.className = "bubble-meta";
+    meta.textContent = `${tokens} tokens · ${tps.toFixed(1)} t/s`;
+    wrap.innerHTML = `<div class="avatar ${role}">AI</div>`;
+    const col = document.createElement("div"); col.className = "bubble-col";
+    col.appendChild(bubble); col.appendChild(meta); wrap.appendChild(col);
+    area.appendChild(wrap);
+    let i = 0;
+    const iv = setInterval(()=>{
+        bubble.textContent += text[i++];
+        area.scrollTop = area.scrollHeight;
+        if(i >= text.length) clearInterval(iv);
+    }, 18);
+}
+
+function addTyping() {
+    const area = document.getElementById("messages");
+    const wrap = document.createElement("div"); wrap.className = "msg-row bot";
+    wrap.innerHTML = `<div class="avatar bot">AI</div>
+        <div class="bubble-col"><div class="bubble bot typing-bbl">
+            <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        </div></div>`;
+    area.appendChild(wrap);
+    area.scrollTo({top: area.scrollHeight, behavior:"smooth"});
+    return wrap;
+}
+
+function escapeHtml(t) {
+    return t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+initChart();
+setInterval(loadLogs, 2000);
+loadCheckpoints();
+loadLogs();
+</script>
+
+</body>
+</html>
