@@ -1,3 +1,4 @@
+
 # config.py
 
 import torch
@@ -17,12 +18,16 @@ class Config:
     epochs        = 30
 
     # Hybrid: peso da loss AR vs Diffusion
-    # 0.0 = só diffusion | 1.0 = só AR | 0.5 = igual
-    ar_alpha      = 0.5
+    ar_alpha       = 0.5
 
-    # AR Refiner (inferência)
+    # AR Refiner — modo de refinamento
+    # "fast"     : batched, threshold alto  (velocidade maxima, menos correcoes)
+    # "balanced" : batched, threshold baixo (meio-termo, mais correcoes, padrao)
+    ar_refine_mode      = "balanced"
+    ar_threshold_fast   = 0.65   # poucos tokens corrigidos
+    ar_threshold_balanced = 0.55 # mais agressivo, compensa falta de cascata
+
     ar_temperature = 1.0
-    ar_threshold   = 0.65
     ar_top_k       = 40
 
     device = "cuda" if torch.cuda.is_available() else "cpu"

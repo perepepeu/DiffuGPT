@@ -8,7 +8,7 @@ from tokenizer import BPEFastTokenizer
 
 
 # ══════════════════════════════════════════════════════════════════
-# MODO 1 — Diffusion  (bidirecional, iterativa)
+# MODO 1 — Diffusion
 # ══════════════════════════════════════════════════════════════════
 def generate(
     model,
@@ -105,37 +105,43 @@ def generate_ar(
         generated += 1
 
     elapsed = time.time() - start
-    tps     = generated / max(elapsed, 1e-6)
-
-    return tok.decode(x[0].tolist()), generated, tps
+    return tok.decode(x[0].tolist()), generated, generated / max(elapsed, 1e-6)
 
 
 # ══════════════════════════════════════════════════════════════════
-# MODO 3 — Hibrido  (Diffusion gera rascunho → AR corrige)
+# REFINADOR AR — batched (1 forward pass, sempre rapido)
 # ══════════════════════════════════════════════════════════════════
-def _refine_ar(model, draft_ids, cfg, temperature=1.0, threshold=0.65):
+def _refine_ar(model, draft_ids, cfg, temperature=1.0, mode="balanced"):
     """
-    Versão rápida: UM único forward pass causal no rascunho inteiro.
-    logits[i] prediz o token na posição i+1 — corrige se confiante.
+    Um unico forward pass causal no rascunho inteiro.
+
+    mode="fast"     → threshold alto (0.65): menos tokens trocados, mais rapido pos-proc
+    mode="balanced" → threshold baixo (0.55): mais agressivo, compensa falta de cascata
     """
-    device = cfg.device
-    x      = torch.tensor(draft_ids).unsqueeze(0).to(device)
+    threshold = cfg.ar_threshold_fast if mode == "fast" else cfg.ar_threshold_balanced
+    device    = cfg.device
+
+    x = torch.tensor(draft_ids).unsqueeze(0).to(device)
 
     with torch.no_grad():
-        logits, _ = model.forward_ar(x)          # (1, T, V) — um único pass
+        logits, _ = model.forward_ar(x)              # (1, T, V) — unico forward pass
 
     probs              = torch.softmax(logits[0] / temperature, dim=-1)  # (T, V)
-    top_probs, top_tok = probs.max(dim=-1)        # (T,)
+    top_probs, top_tok = probs.max(dim=-1)            # (T,)
 
     refined = list(draft_ids)
+    replaced = 0
     for i in range(len(draft_ids) - 1):
-        # logits na posição i prediz o token i+1
         if top_probs[i].item() > threshold and top_tok[i].item() != refined[i + 1]:
             refined[i + 1] = top_tok[i].item()
+            replaced += 1
 
-    return refined
+    return refined, replaced
 
 
+# ══════════════════════════════════════════════════════════════════
+# MODO 3 — Hibrido  (Diffusion + AR refiner)
+# ══════════════════════════════════════════════════════════════════
 def generate_hybrid(
     model,
     tok,
@@ -143,15 +149,11 @@ def generate_hybrid(
     diff_steps=24,
     min_new_tokens=20,
     ar_temperature=1.0,
-    ar_threshold=0.65,
+    ar_mode=None,        # None = usa cfg.ar_refine_mode
     show_steps=False,
 ):
-    """
-    Pipeline hibrido em 2 estagios:
-      1) Diffusion  → gera rascunho global
-      2) AR Refiner → corrige token por token
-    """
-    cfg = Config()
+    cfg      = Config()
+    refine_m = ar_mode if ar_mode else cfg.ar_refine_mode
 
     # Estagio 1: Diffusion
     draft_text, diff_tokens, diff_tps = generate(
@@ -162,16 +164,16 @@ def generate_hybrid(
         inline=False,
     )
 
-    # Estagio 2: AR Refinement
-    start     = time.time()
-    draft_ids = tok.encode(draft_text)
-    refined   = _refine_ar(model, draft_ids, cfg, ar_temperature, ar_threshold)
-    elapsed   = time.time() - start
+    # Estagio 2: AR Refinement (1 forward pass)
+    start              = time.time()
+    draft_ids          = tok.encode(draft_text)
+    refined, replaced  = _refine_ar(model, draft_ids, cfg, ar_temperature, mode=refine_m)
+    elapsed            = time.time() - start
 
     refined_text = tok.decode(refined)
     ar_tps       = len(refined) / max(elapsed, 1e-6)
 
-    return draft_text, refined_text, diff_tokens, diff_tps, len(refined), ar_tps
+    return draft_text, refined_text, diff_tokens, diff_tps, len(refined), ar_tps, replaced
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -194,40 +196,41 @@ def main():
     model.eval()
 
     print("=== HYBRID TEXT GENERATOR ===\n")
-    print("Modos disponiveis:")
     print("  1) Diffusion pura")
     print("  2) AR puro (GPT-style)")
-    print("  3) Hibrido (Diffusion + AR refiner)\n")
+    print("  3) Hibrido — balanced (meio-termo, padrao)")
+    print("  4) Hibrido — fast    (velocidade maxima)\n")
 
-    modo   = input("Modo (1/2/3): ").strip()
+    modo   = input("Modo (1/2/3/4): ").strip()
     prompt = input("Prompt: ").strip()
 
     if modo == "1":
         show = input("Mostrar difusao? (s/n): ").lower() == "s"
         print("\nGerando...\n")
         out, tokens, tps = generate(model, tok, prompt, show_steps=show, inline=True)
-        print(f"\n\n=== RESULTADO FINAL ===\n{out}")
-        print(f"\nTokens: {tokens} | Velocidade: {tps:.2f} tok/s")
+        print(f"\n\n=== RESULTADO ===\n{out}")
+        print(f"Tokens: {tokens} | {tps:.2f} tok/s")
 
     elif modo == "2":
         temp  = float(input("Temperatura (ex: 1.0): ") or "1.0")
         n_tok = int(input("Max novos tokens (ex: 80): ") or "80")
         print("\nGerando...\n")
         out, tokens, tps = generate_ar(model, tok, prompt, max_new_tokens=n_tok, temperature=temp)
-        print(f"=== RESULTADO FINAL ===\n{out}")
-        print(f"\nTokens: {tokens} | Velocidade: {tps:.2f} tok/s")
+        print(f"=== RESULTADO ===\n{out}")
+        print(f"Tokens: {tokens} | {tps:.2f} tok/s")
 
-    elif modo == "3":
+    elif modo in ("3", "4"):
+        refine_mode = "balanced" if modo == "3" else "fast"
         show = input("Mostrar difusao? (s/n): ").lower() == "s"
         print("\nGerando...\n")
-        draft, refined, dt, dtps, at, atps = generate_hybrid(
-            model, tok, prompt, show_steps=show
+        draft, refined, dt, dtps, at, atps, replaced = generate_hybrid(
+            model, tok, prompt, show_steps=show, ar_mode=refine_mode
         )
         print(f"\n\n=== RASCUNHO (difusao) ===\n{draft}")
-        print(f"\n=== RESULTADO FINAL (apos AR) ===\n{refined}")
+        print(f"\n=== RESULTADO FINAL (apos AR [{refine_mode}]) ===\n{refined}")
         print(f"\n=== METRICAS ===")
         print(f"Difusao : {dt} tokens @ {dtps:.2f} tok/s")
-        print(f"AR      : {at} tokens @ {atps:.2f} tok/s")
+        print(f"AR      : {at} tokens @ {atps:.2f} tok/s  ({replaced} tokens corrigidos)")
     else:
         print("Modo invalido.")
 
