@@ -442,6 +442,32 @@ def refine_with_ar(
     return refined, replaced, processed
 
 
+# Wrapper de compatibilidade: expõe generate_diffusion como generate().
+def generate(
+    model,
+    tok,
+    cfg=None,
+    prompt="",
+    steps=24,
+    min_new_tokens=20,
+    show_steps=False,
+    inline=False,
+):
+    result = generate_diffusion(
+        model=model,
+        tok=tok,
+        cfg=cfg,
+        prompt=prompt,
+        steps=steps,
+        min_new_tokens=min_new_tokens,
+        temperature=0.5,
+        confidence_threshold=0.55,
+        show_steps=show_steps,
+        inline=inline,
+    )
+    return result.text, result.generated_tokens, result.tokens_per_sec
+
+
 # Pipeline híbrido: primeiro gera um rascunho por difusão e depois usa
 # o modo AR para revisar parte da sequência.
 def generate_hybrid(
@@ -452,11 +478,15 @@ def generate_hybrid(
     diff_steps: int = 24,
     min_new_tokens: int = 20,
     diff_temperature: float = 0.5,
-    diff_confidence_threshold: float = 0.6,
+    ar_threshold: Optional[float] = None,
+    diff_confidence_threshold: float = 0.55,
     ar_temperature: float = 1.0,
     ar_mode: Optional[str] = None,
     show_steps: bool = False,
 ) -> HybridResult:
+    if ar_threshold is not None:
+        diff_confidence_threshold = ar_threshold
+
     refine_mode = ar_mode or get_cfg_value(cfg, "ar_refine_mode", "balanced")
 
     draft = generate_diffusion(
@@ -490,6 +520,38 @@ def generate_hybrid(
         refined_tokens_processed=processed,
         refined_tokens_replaced=replaced,
         refine_tokens_per_sec=processed / max(elapsed, 1e-6),
+    )
+
+
+def generate_hybrid_compat(
+    model,
+    tok,
+    cfg,
+    prompt,
+    diff_steps=24,
+    min_new_tokens=20,
+    ar_temperature=1.0,
+    ar_threshold=None,
+    show_steps=False,
+):
+    result = generate_hybrid(
+        model=model,
+        tok=tok,
+        cfg=cfg,
+        prompt=prompt,
+        diff_steps=diff_steps,
+        min_new_tokens=min_new_tokens,
+        ar_threshold=ar_threshold,
+        ar_temperature=ar_temperature,
+        show_steps=show_steps,
+    )
+    return (
+        result.draft.text,
+        result.refined_text,
+        result.draft.generated_tokens,
+        result.draft.tokens_per_sec,
+        result.refined_tokens_processed,
+        result.refine_tokens_per_sec,
     )
 
 
