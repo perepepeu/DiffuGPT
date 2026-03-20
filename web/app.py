@@ -35,7 +35,7 @@ def load_model(path):
 
     state_dict = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
 
-    model.load_state_dict(state_dict)
+    model.load_state_dict(state_dict, strict=False)
     model.eval()
     return model
 
