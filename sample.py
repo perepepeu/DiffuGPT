@@ -59,7 +59,7 @@ def strip_compiled_prefix(state_dict):
     cleaned = {}
     for key, value in state_dict.items():
         if key.startswith("_orig_mod."):
-            cleaned[key[len("_orig_mod."):]] = value
+            cleaned[key[len("_orig_mod.") :]] = value
         else:
             cleaned[key] = value
     return cleaned
@@ -120,7 +120,9 @@ def load_model(cfg: Config, model_path: str) -> HybridModel:
 
 
 # Garante que todos os token IDs estejam dentro do vocabulário esperado.
-def ensure_ids_in_range(ids: List[int], vocab_size: int, source: str = "ids") -> List[int]:
+def ensure_ids_in_range(
+    ids: List[int], vocab_size: int, source: str = "ids"
+) -> List[int]:
     if not isinstance(ids, list):
         ids = list(ids)
 
@@ -283,7 +285,9 @@ def generate_diffusion(
         if generated_so_far < min_new_tokens:
             update_mask = editable_mask & (x == model.MASK)
         else:
-            update_mask = editable_mask & ((x == model.MASK) | (confidence < confidence_threshold))
+            update_mask = editable_mask & (
+                (x == model.MASK) | (confidence < confidence_threshold)
+            )
 
         if update_mask.any():
             sampled = torch.multinomial(probs.view(-1, probs.size(-1)), 1).view_as(x)
@@ -339,7 +343,9 @@ def generate_ar(
     prompt_ids = encode_prompt(tok, prompt, cfg.vocab_size)
 
     if len(prompt_ids) == 0:
-        raise ValueError("Prompt vazio. O modo AR precisa de pelo menos 1 token de entrada.")
+        raise ValueError(
+            "Prompt vazio. O modo AR precisa de pelo menos 1 token de entrada."
+        )
 
     prompt_ids, _ = prepare_prompt_ids(prompt_ids, cfg.block_size)
     x = torch.tensor(prompt_ids, dtype=torch.long, device=device).unsqueeze(0)
@@ -417,7 +423,7 @@ def refine_with_ar(
     for target_idx in range(max(1, protected_prefix_len), len(refined)):
         prefix = refined[:target_idx]
         if len(prefix) > cfg.block_size:
-            prefix = prefix[-cfg.block_size:]
+            prefix = prefix[-cfg.block_size :]
 
         x = torch.tensor(prefix, dtype=torch.long, device=device).unsqueeze(0)
         logits, _ = model.forward_ar(x)
@@ -506,7 +512,9 @@ def normalize_mode(raw: str) -> str:
     }
 
     if raw not in mapping:
-        raise ValueError("Modo inválido. Use 1, 2, 3, 4, diffusion, ar, hybrid-balanced ou hybrid-fast.")
+        raise ValueError(
+            "Modo inválido. Use 1, 2, 3, 4, diffusion, ar, hybrid-balanced ou hybrid-fast."
+        )
 
     return mapping[raw]
 
@@ -545,19 +553,54 @@ def ask_float(prompt: str, default: float) -> float:
 
 # Define os argumentos aceitos pela interface de linha de comando.
 def build_arg_parser():
-    parser = argparse.ArgumentParser(description="Hybrid text generator (Diffusion + AR).")
-    parser.add_argument("--mode", type=str, default=None, help="1/2/3/4 ou diffusion/ar/hybrid-balanced/hybrid-fast")
+    parser = argparse.ArgumentParser(
+        description="Hybrid text generator (Diffusion + AR)."
+    )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default=None,
+        help="1/2/3/4 ou diffusion/ar/hybrid-balanced/hybrid-fast",
+    )
     parser.add_argument("--prompt", type=str, default=None, help="Prompt de entrada")
-    parser.add_argument("--model-path", type=str, default="model.pt", help="Caminho do checkpoint")
-    parser.add_argument("--tokenizer-path", type=str, default="data/tok-1024.model", help="Caminho do tokenizer")
+    parser.add_argument(
+        "--model-path", type=str, default="model.pt", help="Caminho do checkpoint"
+    )
+    parser.add_argument(
+        "--tokenizer-path",
+        type=str,
+        default="data/tok-1024.model",
+        help="Caminho do tokenizer",
+    )
     parser.add_argument("--steps", type=int, default=24, help="Passos de difusão")
-    parser.add_argument("--min-new-tokens", type=int, default=20, help="Mínimo de tokens novos na difusão")
-    parser.add_argument("--temperature", type=float, default=1.0, help="Temperatura AR ou refinador")
-    parser.add_argument("--diff-temperature", type=float, default=0.5, help="Temperatura da difusão")
-    parser.add_argument("--confidence-threshold", type=float, default=0.6, help="Threshold de confiança da difusão")
+    parser.add_argument(
+        "--min-new-tokens",
+        type=int,
+        default=20,
+        help="Mínimo de tokens novos na difusão",
+    )
+    parser.add_argument(
+        "--temperature", type=float, default=1.0, help="Temperatura AR ou refinador"
+    )
+    parser.add_argument(
+        "--diff-temperature", type=float, default=0.5, help="Temperatura da difusão"
+    )
+    parser.add_argument(
+        "--confidence-threshold",
+        type=float,
+        default=0.55,
+        help="Threshold de confiança da difusão",
+    )
     parser.add_argument("--top-k", type=int, default=40, help="Top-k do modo AR")
-    parser.add_argument("--max-new-tokens", type=int, default=80, help="Máximo de novos tokens no modo AR")
-    parser.add_argument("--show-steps", action="store_true", help="Mostra progresso da difusão")
+    parser.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=80,
+        help="Máximo de novos tokens no modo AR",
+    )
+    parser.add_argument(
+        "--show-steps", action="store_true", help="Mostra progresso da difusão"
+    )
     return parser
 
 
@@ -576,24 +619,34 @@ def interactive_config(args):
         raise ValueError("Prompt vazio.")
 
     if mode == "diffusion":
-        show_steps = args.show_steps or ask_str("Mostrar difusão? (s/n): ", "n").lower() == "s"
+        show_steps = (
+            args.show_steps or ask_str("Mostrar difusão? (s/n): ", "n").lower() == "s"
+        )
         args.mode = mode
         args.prompt = prompt
         args.show_steps = show_steps
         return args
 
     if mode == "ar":
-        args.temperature = ask_float(f"Temperatura [{args.temperature}]: ", args.temperature)
-        args.max_new_tokens = ask_int(f"Max novos tokens [{args.max_new_tokens}]: ", args.max_new_tokens)
+        args.temperature = ask_float(
+            f"Temperatura [{args.temperature}]: ", args.temperature
+        )
+        args.max_new_tokens = ask_int(
+            f"Max novos tokens [{args.max_new_tokens}]: ", args.max_new_tokens
+        )
         args.mode = mode
         args.prompt = prompt
         return args
 
-    show_steps = args.show_steps or ask_str("Mostrar difusão? (s/n): ", "n").lower() == "s"
+    show_steps = (
+        args.show_steps or ask_str("Mostrar difusão? (s/n): ", "n").lower() == "s"
+    )
     args.mode = mode
     args.prompt = prompt
     args.show_steps = show_steps
-    args.temperature = ask_float(f"Temperatura AR [{args.temperature}]: ", args.temperature)
+    args.temperature = ask_float(
+        f"Temperatura AR [{args.temperature}]: ", args.temperature
+    )
     return args
 
 
@@ -637,7 +690,9 @@ def main():
                 inline=True,
             )
             print(f"\n=== RESULTADO ===\n{result.text}")
-            print(f"Tokens gerados: {result.generated_tokens} | {result.tokens_per_sec:.2f} tok/s")
+            print(
+                f"Tokens gerados: {result.generated_tokens} | {result.tokens_per_sec:.2f} tok/s"
+            )
             return
 
         if args.mode == "ar":
@@ -651,7 +706,9 @@ def main():
                 top_k=args.top_k,
             )
             print(f"=== RESULTADO ===\n{result.text}")
-            print(f"Tokens gerados: {result.generated_tokens} | {result.tokens_per_sec:.2f} tok/s")
+            print(
+                f"Tokens gerados: {result.generated_tokens} | {result.tokens_per_sec:.2f} tok/s"
+            )
             return
 
         ar_mode = "balanced" if args.mode == "hybrid-balanced" else "fast"
@@ -672,7 +729,9 @@ def main():
         print(f"\n=== RASCUNHO (difusão) ===\n{result.draft.text}")
         print(f"\n=== RESULTADO FINAL (após AR [{ar_mode}]) ===\n{result.refined_text}")
         print("\n=== MÉTRICAS ===")
-        print(f"Difusão : {result.draft.generated_tokens} tokens @ {result.draft.tokens_per_sec:.2f} tok/s")
+        print(
+            f"Difusão : {result.draft.generated_tokens} tokens @ {result.draft.tokens_per_sec:.2f} tok/s"
+        )
         print(
             f"AR      : {result.refined_tokens_processed} tokens processados @ "
             f"{result.refine_tokens_per_sec:.2f} tok/s "

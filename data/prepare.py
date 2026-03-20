@@ -2,9 +2,11 @@
 
 import numpy as np
 from tokenizer import BPEFastTokenizer
+from config import Config
 
 
 def main():
+    cfg = Config()
     tok = BPEFastTokenizer()
     tok.load("data/tok-1024.model")
 
@@ -13,7 +15,7 @@ def main():
 
     ids = tok.encode(text)
 
-    block_size = 128
+    block_size = cfg.block_size
 
     arr = np.array(ids, dtype=np.int32)
     n = len(arr) // block_size

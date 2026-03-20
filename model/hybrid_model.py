@@ -100,9 +100,13 @@ class HybridModel(nn.Module):
         if not torch.is_tensor(x_ids):
             raise TypeError(f"{name} precisa ser um torch.Tensor.")
         if x_ids.ndim != 2:
-            raise ValueError(f"{name} precisa ter shape (B, T), mas veio {tuple(x_ids.shape)}.")
+            raise ValueError(
+                f"{name} precisa ter shape (B, T), mas veio {tuple(x_ids.shape)}."
+            )
         if x_ids.dtype != torch.long:
-            raise TypeError(f"{name} precisa ter dtype torch.long, mas veio {x_ids.dtype}.")
+            raise TypeError(
+                f"{name} precisa ter dtype torch.long, mas veio {x_ids.dtype}."
+            )
 
         batch_size, seq_len = x_ids.shape
 
@@ -132,9 +136,13 @@ class HybridModel(nn.Module):
         if not torch.is_tensor(targets):
             raise TypeError("targets precisa ser um torch.Tensor.")
         if targets.ndim != 2:
-            raise ValueError(f"targets precisa ter shape (B, T), mas veio {tuple(targets.shape)}.")
+            raise ValueError(
+                f"targets precisa ter shape (B, T), mas veio {tuple(targets.shape)}."
+            )
         if targets.dtype != torch.long:
-            raise TypeError(f"targets precisa ter dtype torch.long, mas veio {targets.dtype}.")
+            raise TypeError(
+                f"targets precisa ter dtype torch.long, mas veio {targets.dtype}."
+            )
         if tuple(targets.shape) != tuple(expected_shape):
             raise ValueError(
                 f"targets precisa ter shape {tuple(expected_shape)}, mas veio {tuple(targets.shape)}."
@@ -205,7 +213,7 @@ class HybridModel(nn.Module):
 
         loss = None
         if targets is not None:
-            mask = (x_ids == self.MASK)
+            mask = x_ids == self.MASK
             loss = self._masked_cross_entropy(logits, targets, mask=mask)
 
         return logits, loss
@@ -217,6 +225,10 @@ class HybridModel(nn.Module):
 
         A loss AR usa deslocamento causal:
         posição i prevê o token i+1.
+
+        NOTA: time_emb não é usado em forward_ar() porque difusão opera em
+        múltiplos timesteps progressivos (t decrescente), enquanto AR prevê
+        tokens sequencialmente em contexto fixo sem ruído temporal.
         """
         batch_size, seq_len = self._validate_token_tensor(x_ids, "x_ids")
         self._validate_targets(targets, (batch_size, seq_len))

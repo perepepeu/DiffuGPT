@@ -46,6 +46,7 @@ def seed_everything(seed):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
 
 
 # Lê um atributo do config com fallback para um valor padrão.
@@ -71,14 +72,6 @@ def build_model(cfg, device):
     ).to(device)
 
 
-# Carrega arquivos .pt de forma compatível com versões diferentes do PyTorch.
-def safe_torch_load(path, map_location):
-    try:
-        return torch.load(path, map_location=map_location, weights_only=True)
-    except TypeError:
-        return torch.load(path, map_location=map_location)
-
-
 # Remove o prefixo "_orig_mod." quando o modelo foi salvo após compile.
 def strip_compiled_prefix(state_dict):
     if not isinstance(state_dict, dict):
@@ -90,7 +83,7 @@ def strip_compiled_prefix(state_dict):
     cleaned = {}
     for k, v in state_dict.items():
         if k.startswith("_orig_mod."):
-            cleaned[k[len("_orig_mod."):]] = v
+            cleaned[k[len("_orig_mod.") :]] = v
         else:
             cleaned[k] = v
     return cleaned
@@ -102,7 +95,10 @@ def load_existing_weights(model, device):
     if not os.path.exists("model.pt"):
         return
 
-    ckpt = safe_torch_load("model.pt", map_location=device)
+    try:
+        ckpt = torch.load("model.pt", map_location=device, weights_only=True)
+    except TypeError:
+        ckpt = torch.load("model.pt", map_location=device)
 
     if isinstance(ckpt, dict) and "model_state_dict" in ckpt:
         state_dict = ckpt["model_state_dict"]
@@ -122,12 +118,14 @@ def load_existing_weights(model, device):
 
 
 # Salva apenas os pesos do melhor modelo encontrado até o momento.
-def save_best_weights(model):
-    torch.save(model.state_dict(), "model.pt")
+def save_best_weights(model, path="model.pt"):
+    torch.save(model.state_dict(), path)
 
 
 # Salva um checkpoint completo por época, incluindo otimizador e histórico.
-def save_epoch_checkpoint(model, optimizer, epoch, best_val, train_losses, val_losses, diff_losses, ar_losses):
+def save_epoch_checkpoint(
+    model, optimizer, epoch, best_val, train_losses, val_losses, diff_losses, ar_losses
+):
     ckpt = {
         "epoch": epoch,
         "best_val": best_val,
@@ -144,7 +142,9 @@ def save_epoch_checkpoint(model, optimizer, epoch, best_val, train_losses, val_l
 # Valida shape e faixa dos token IDs antes de enviar o batch ao modelo.
 def validate_batch(batch, cfg):
     if batch.ndim != 2:
-        raise ValueError(f"Batch precisa ter shape (B, T), mas veio {tuple(batch.shape)}.")
+        raise ValueError(
+            f"Batch precisa ter shape (B, T), mas veio {tuple(batch.shape)}."
+        )
 
     if batch.size(1) != cfg.block_size:
         raise ValueError(
@@ -165,45 +165,18 @@ def sample_timesteps(batch_size, max_timesteps, device, generator=None):
     if max_timesteps < 2:
         raise ValueError("cfg.max_timesteps precisa ser >= 2.")
 
-    t = torch.randint(1, max_timesteps, (batch_size,), generator=generator, device="cpu")
+    t = torch.randint(
+        1, max_timesteps, (batch_size,), generator=generator, device="cpu"
+    )
     return t.to(device)
-
-
-# Aplica ruído mascarando posições aleatórias de acordo com o scheduler.
-# Garante ao menos uma posição mascarada por sequência.
-def add_noise(batch, t, mask_token, scheduler, generator=None):
-    prob = scheduler.get_prob(t).unsqueeze(1)
-
-    if generator is None:
-        rand = torch.rand(batch.shape, device=batch.device, dtype=torch.float32)
-    else:
-        rand = torch.rand(batch.shape, generator=generator, device="cpu", dtype=torch.float32).to(batch.device)
-
-    mask = rand < prob
-
-    # Evita linhas sem máscara, o que tornaria o passo de difusão inútil.
-    empty_rows = ~mask.any(dim=1)
-    if empty_rows.any():
-        row_ids = torch.nonzero(empty_rows, as_tuple=False).squeeze(1)
-
-        if generator is None:
-            col_ids = torch.randint(0, batch.size(1), (row_ids.numel(),), device=batch.device)
-        else:
-            col_ids = torch.randint(
-                0, batch.size(1), (row_ids.numel(),), generator=generator, device="cpu"
-            ).to(batch.device)
-
-        mask[row_ids, col_ids] = True
-
-    x_noisy = batch.clone()
-    x_noisy[mask] = mask_token
-    return x_noisy
 
 
 # Cria os DataLoaders de treino e validação com split reproduzível.
 def make_loaders(dataset, cfg, seed, pin_memory):
     if len(dataset) < 2:
-        raise ValueError("O dataset precisa ter pelo menos 2 amostras para split train/val.")
+        raise ValueError(
+            "O dataset precisa ter pelo menos 2 amostras para split train/val."
+        )
 
     train_size = int(0.9 * len(dataset))
     val_size = len(dataset) - train_size
@@ -218,7 +191,9 @@ def make_loaders(dataset, cfg, seed, pin_memory):
         train_size = len(dataset) - 1
 
     split_gen = torch.Generator().manual_seed(seed)
-    train_ds, val_ds = random_split(dataset, [train_size, val_size], generator=split_gen)
+    train_ds, val_ds = random_split(
+        dataset, [train_size, val_size], generator=split_gen
+    )
 
     num_workers = int(get_cfg_value(cfg, "num_workers", 0))
 
@@ -287,7 +262,9 @@ def main():
             print(f"torch.compile indisponível: {e}. Seguindo sem compile.")
 
     scheduler = NoiseScheduler(cfg.max_timesteps)
-    optimizer = optim.AdamW(base_model.parameters(), lr=cfg.lr, weight_decay=weight_decay)
+    optimizer = optim.AdamW(
+        base_model.parameters(), lr=cfg.lr, weight_decay=weight_decay
+    )
 
     best_val = float("inf")
     train_losses, val_losses = [], []
@@ -308,7 +285,7 @@ def main():
 
             # Amostra um tempo t e cria entrada ruidosa para o objetivo de difusão.
             t = sample_timesteps(batch.size(0), cfg.max_timesteps, device=device)
-            x_noisy = add_noise(batch, t, base_model.MASK, scheduler)
+            x_noisy = scheduler.add_noise(batch, t, base_model.MASK)
 
             # Calcula as duas perdas: difusão e autoregressiva.
             _, loss_diff = model.forward_diffusion(x_noisy, t, targets=batch)
@@ -344,7 +321,11 @@ def main():
             )
 
             # Salva logs parciais em intervalos regulares para monitoramento externo.
-            if step_idx == 1 or step_idx % max(1, live_log_every) == 0 or step_idx == len(train_loader):
+            if (
+                step_idx == 1
+                or step_idx % max(1, live_log_every) == 0
+                or step_idx == len(train_loader)
+            ):
                 save_live_logs(
                     train_losses + [avg_loss],
                     val_losses,
@@ -372,8 +353,10 @@ def main():
 
                 # Usa gerador determinístico na validação para reduzir variação entre épocas.
                 val_gen = torch.Generator().manual_seed(seed + batch_idx)
-                t = sample_timesteps(batch.size(0), cfg.max_timesteps, device=device, generator=val_gen)
-                x_noisy = add_noise(batch, t, base_model.MASK, scheduler, generator=val_gen)
+                t = sample_timesteps(
+                    batch.size(0), cfg.max_timesteps, device=device, generator=val_gen
+                )
+                x_noisy = scheduler.add_noise(batch, t, base_model.MASK)
 
                 _, ld = model.forward_diffusion(x_noisy, t, targets=batch)
                 _, la = model.forward_ar(batch, targets=batch)
